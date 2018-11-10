@@ -1,0 +1,16 @@
+<!--The content below is only a placeholder and can be replaced.-->
+<div>
+    <select [(ngModel)]="test" style="float:right">
+        <option value="geojson">Geojson</option>
+        <option value="shapefile">Shapefile</option>
+        <option value="csv">Csv</option>
+        <option value="sync">Sync</option>
+        <option value="map">Map</option>
+    </select>
+    <test-geojson *ngIf="test === 'geojson'"></test-geojson>
+    <test-shapefile *ngIf="test === 'shapefile'"></test-shapefile>
+    <test-csv *ngIf="test === 'csv'"></test-csv>
+    <test-sync *ngIf="test === 'sync'"></test-sync>
+    <sk-map-test *ngIf="test === 'map'"></sk-map-test>
+    
+</div>

@@ -1,0 +1,14 @@
+<div>
+    <div *ngFor="let item of tests" class="test">
+        <h1>
+                <span *ngIf="item.success"><i class="fa fa-check-square-o"></i></span>
+                <span *ngIf="!item.success"><i class="fa fa-square-o"></i></span>
+                &nbsp;-&nbsp;<span [ngClass]="{tfailure: (item.success===false) }">{{item.should}}</span>
+        </h1>
+        <hr>
+        <div class="result" [ngClass]="{none: (item.success === undefined),success: (item.success === true), failure: (item.success===false) }">
+            <i class="fa fa-arrow-right"></i> 
+            Result: {{ item.result}}
+        </div>
+    </div> 
+</div>

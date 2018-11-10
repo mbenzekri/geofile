@@ -1,0 +1,11 @@
+<div>
+    <hr>
+    <h1>Test Map</h1>
+    <hr>
+    <div id="map" style="height:600px;background-color: aquamarine;"></div>
+    Scale : 1/{{ scale }} Zoom: {{ map ? map.getView().getZoom() / 1 : '' }} Message: {{ message }}
+    <div><input  type="checkbox" checked (click)="switchOSM()"> layer OSM</div>
+    <div *ngFor="let geofile of all;let i = index">
+            <input  type="checkbox" checked (click)="switch(i)">{{geofile.name}} {{geofile.loaded ? geofile.count + ' features loaded' : 'not loaded' }}
+    </div>
+</div>

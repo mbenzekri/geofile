@@ -1,0 +1,19 @@
+{
+  "name": "index",
+  "version": "1.0.0",
+  "description": "Indexing tool for GeoJSON files",
+  "main": "index.ts",
+  "scripts": {
+    "test": "node lib/index.js YVE",
+    "build": "tsc -p ."
+  },
+  "author": "Mohamed Ben Zekri",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^10.11.6",
+    "typescript": "^3.1.2"
+  },
+  "dependencies": {
+    "jsonparse": "^1.3.1"
+  }
+}

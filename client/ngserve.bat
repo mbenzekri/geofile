@@ -1,0 +1,1 @@
+ng serve --port 8080 --host jarvis --disableHostCheck true

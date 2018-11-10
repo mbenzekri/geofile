@@ -1,0 +1,8 @@
+/* You can add global styles to this file, and also import other style files */
+.ol-dragzoom {
+    border: 3px solid rgb(23, 53, 119) !important;
+    background-color: rgba(255,255,255,0.4);
+}
+body {
+    background-color: rgb(247, 245, 181);
+}

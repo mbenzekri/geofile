@@ -1,5 +1,5 @@
 import { Component, OnInit } from '@angular/core';
-import * as gf from '../../../../dist_l/geolib';
+import * as gf from 'geofile';
 import { TestBaseComponent } from './test-base.component';
 
 @Component({

@@ -1,5 +1,5 @@
 import { Component, OnInit, ChangeDetectorRef } from '@angular/core';
-import { Download, Sync, FSDir, FSFile, FSFormat } from '../../../../dist_l/geolib';
+import { Download, Sync, FSDir, FSFile, FSFormat } from 'geofile';
 import { TestBaseComponent } from './test-base.component';
 
 const NBYTES = 10 * Math.pow(1024, 3);
@@ -61,7 +61,7 @@ export class TestSyncComponent extends TestBaseComponent implements OnInit {
         .then(file => {
             return FSFile.slice(file, FSFormat.text, 203, 27);
         })
-        .then(txt =>  JSON.parse(txt))
+        .then(txt =>  JSON.parse(<string>txt))
         .then(this.success('روسيا البيضاء'));
     }
 

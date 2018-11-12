@@ -2,10 +2,10 @@
   "compileOnSave": true,
   "compilerOptions": {
     "baseUrl": "./",
-    "outDir": "../dist_l/",
+    "outDir": "./dist",
     "sourceMap": true,
     "declaration": true,
-    "module": "es2015",
+    "module": "commonjs",
     "moduleResolution": "node",
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,

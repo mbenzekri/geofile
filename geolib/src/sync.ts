@@ -1,6 +1,8 @@
 'use strict';
+import * as fs from 'fs';
 import { _ } from './polyfill';
 _();
+const ISNODE = (typeof window === 'undefined');
 
 /**
  * internal class to check updateness of synced files (DO NOT USE!)
@@ -251,7 +253,7 @@ enum FSFormat {
 /**
  * File system api base class
  */
-export abstract class FSys {
+abstract class FSys {
 
     static fs: any = null;
     static granted: number = null;
@@ -264,6 +266,10 @@ export abstract class FSys {
      *              caution ! this request may cause a prompt window to popup for user acceptance
      */
     static init(nbytes: number): Promise<number> {
+        if (ISNODE) {
+            if (nbytes > FSys.granted) { FSys.granted = nbytes; }
+            return Promise.resolve(FSys.granted);
+        }
         if (FSys.granted >= nbytes) { return Promise.resolve(FSys.granted); }
         return new Promise((resolve, reject) => {
             (navigator as any).webkitPersistentStorage.queryUsageAndQuota((usedBytes, grantedBytes) => {
@@ -285,6 +291,7 @@ export abstract class FSys {
                 }
             }, reject);
         });
+
     }
 
     /**
@@ -292,9 +299,21 @@ export abstract class FSys {
      * @throws {Error} if FS API not initialized
      */
     static ready() {
-        if (!FSys.fs || !FSys.fs.root || (FSys.granted <= 0)) {
+        if (!ISNODE && (!FSys.fs || !FSys.fs.root || FSys.granted <= 0)) {
             throw (new Error('FS API not initialized or not supported !'));
         }
+    }
+    static hasDisk(fullname: string) {
+        return /^[A-Za-z]:/.test(fullname);
+    }
+
+    static extname(filename: string): string {
+        const arr = /\.[^]*$/.exec(filename);
+        return arr ? arr[0] : '';
+    }
+    static basename(filename: string): string {
+        const arr = /[^\\/]+$/.exec(filename);
+        return arr ? arr[0] : '';
     }
 }
 
@@ -310,6 +329,20 @@ class FSDir extends FSys {
      * @throws {Error} if FS API not initialized
      */
     static create(path: string): Promise<any> {
+        if (ISNODE) {
+            return new Promise((resolve, reject) => {
+                if (this.hasDisk(path)) return reject(new Error('FSDir.create disk selector not implemented do not use \"C:\", \"D:\" etc ...]'));
+                const names = path.split(/[\\\/]+/);
+                let fullpath = '';
+                names.forEach(sdir => {
+                    fullpath += (fullpath ? '/' : '') + sdir;
+                    const stats = fs.statSync(fullpath);
+                    if (stats.isFile()) throw new Error(`FSDir.create on directory ${path} but ${fullpath} is a file`);
+                    if (!stats.isDirectory()) { fs.mkdirSync(fullpath) }
+                })
+                resolve();
+            })
+        }
         return new Promise((resolve, reject) => {
             FSys.ready();
             const dive = (dentry, folders) => {
@@ -331,6 +364,16 @@ class FSDir extends FSys {
      * @throws {Error} if FS API not initialized
      */
     static delete(path: string): Promise<boolean> {
+        if (ISNODE) {
+            return new Promise((resolve, reject) => {
+                if (this.hasDisk(path)) return reject(new Error('FSDir.create disk selector not implemented do not use \"C:\", \"D:\" etc ...]'));
+                if (fs.existsSync(path) && fs.statSync(path).isDirectory()) {
+                    // MBZ TODO must delete all directory content recursively
+                    fs.rmdirSync(path);
+                }
+                resolve(true);
+            });
+        }
         return FSDir.read(path).then((dentry) => {
             return new Promise<boolean>((resolve, reject) => {
                 (dentry as any).removeRecursively(() => { SYNCMAP.removeDir(path); resolve(true); }, reject);
@@ -345,7 +388,7 @@ class FSDir extends FSys {
      * @throws {Error} if FS API not initialized
      */
     static remove(path: string): Promise<any> {
-        return FSDir.remove(path);
+        return FSDir.delete(path);
     }
 
     /**
@@ -355,6 +398,9 @@ class FSDir extends FSys {
      * @throws {Error} if FS API not initialized
      */
     static read(path: string): Promise<any> {
+        if (ISNODE) {
+            throw new Error(`FSDir.read not implemented non sense for node.js !`);
+        }
         return new Promise((resolve, reject) => {
             FSys.ready();
             const dive = (dentry, folders) => {
@@ -373,6 +419,13 @@ class FSDir extends FSys {
      * @throws {Error} if FS API not initialized
      */
     static metadata(path: string): Promise<any> {
+        if (ISNODE) {
+            return new Promise((resolve, reject) => {
+                if (this.hasDisk(path)) return reject(new Error('FSDir.create disk selector not implemented do not use \"C:\", \"D:\" etc ...]'));
+                const stats = fs.statSync(path);
+                return { modificationTime: stats.mtime, size: stats.size };
+            });
+        }
         return FSDir.read(path).then((dentry) => {
             return new Promise((resolve, reject) => {
                 dentry.getMetadata(resolve, reject);
@@ -388,7 +441,26 @@ class FSDir extends FSys {
      * @returns a promise that read the directory an resolve in success with map object (or fileError in reject case)
      * @throws {Error} - if FS API not initialized
      */
-    static files(path: string): Promise<any> {
+    static files(path: string, re = /.*/, deep = false): Promise<{ fullpath, string; size: number, time: Date }[]> {
+        if (ISNODE) {
+            return new Promise((resolve, reject) => {
+                if (this.hasDisk(path)) return reject(new Error('FSDir.create disk selector not implemented do not use \"C:\", \"D:\" etc ...]'));
+                const stack = [path];
+                const files = [];
+                while (stack.length > 0) {
+                    const content = fs.readdirSync(stack.pop());
+                    content.forEach((filename) => {
+                        const fullname = path + '/' + filename
+                        const stats = fs.statSync(fullname);
+                        if (stats.isFile() && re.test(fullname)) { files.push({ fullpath: fullname, size: stats.size, time: stats.mtime }); }
+                        if (deep && stats.isDirectory()) { stack.push() }
+                        return files;
+                    });
+                }
+                resolve(files);
+            })
+        }
+
         return new Promise((resolve, reject) => {
             const getfilemd = (fentry: any) => {
                 return new Promise((inresolve) => {
@@ -416,14 +488,14 @@ class FSDir extends FSys {
             FSDir.read(path)
                 .then((dentry) => getdirmd(dentry))
                 .then((arrofarr) => {
-                    const map = {};
+                    const files = [];
                     if (Array.isArray(arrofarr)) {
                         arrofarr.flatten(arrofarr).forEach((item) => {
-                            map[item.fullpath] = { time: item.time, size: item.size };
+                            files.push({fullpath: item.fullpath, time: item.time, size: item.size });
                         });
                     }
-                    resolve(map);
-                }).catch((e) => { resolve({}); });
+                    resolve(files);
+                }).catch((e) => { resolve([]); });
         });
     }
 }
@@ -441,6 +513,17 @@ class FSFile extends FSys {
      *                    with no params (or fileError in reject case)
      */
     static write(fullname: string, data: string | ArrayBuffer | Blob, notify?: Function): Promise<any> {
+        if (ISNODE) {
+            return new Promise((resolve, reject) => {
+                if (this.hasDisk(fullname)) return reject(new Error('FSDir.create disk selector not implemented do not use \"C:\", \"D:\" etc ...]'));
+                const fd = fs.openSync(fullname, 'w', null);
+                const buf =  data instanceof String  ? Buffer.from(<string>data) : Buffer.from(<ArrayBuffer>data);
+                fs.write(fd, buf,(err,written) => {
+                    fs.closeSync(fd);
+                    resolve(written);
+                });
+            })
+        }
         return new Promise((resolve, reject) => {
             const blob = (data instanceof Blob)
                 ? data
@@ -466,6 +549,14 @@ class FSFile extends FSys {
      * @returns a promise that read data from file and resolve with data (or fileError in reject case)
      */
     static read(fullname: string, format: FSFormat, notify = (e) => { }): Promise<any> {
+        if (ISNODE) {
+            return new Promise((resolve, reject) => {
+                if (this.hasDisk(fullname)) return reject(new Error('FSDir.create disk selector not implemented do not use \"C:\", \"D:\" etc ...]'));
+                fs.readFile(fullname,(format === FSFormat.text) ? 'utf8' : null, (err, data:string|Buffer) => {
+                    err ? reject(err) : (typeof data === 'string') ? resolve(data) : resolve(<ArrayBuffer>data.buffer)
+                });
+            });
+        }
         return new Promise((resolve, reject) => {
             FSys.fs.root.getFile(fullname, { create: false }, (fentry) => {
                 fentry.file((file) => {
@@ -489,10 +580,32 @@ class FSFile extends FSys {
      * @param offset offset in byte in the file
      * @param length length of the slice to read
      */
-    static slice(file: File, format: FSFormat, offset: number, length: number): Promise<any> {
+    static slice(file: number|File, format: FSFormat, offset: number, length: number): Promise<string|ArrayBuffer> {
+        if (ISNODE) {
+            return new Promise((resolve, reject) => {
+                const buf = Buffer.alloc(length,0);
+                fs.read(<number>file,buf,0,length,offset,(err,bytesread) => {
+                    if (err) {
+                        reject(err);
+                    } else  if (format == FSFormat.text) {
+                        resolve(buf.slice(0,bytesread).toString('utf8'));
+                    } else {
+                        if (bytesread === length) {
+                            resolve(<ArrayBuffer>buf.buffer);
+                        } else {
+                            const target = new Uint8Array(bytesread);
+                            const source = new Uint8Array(buf.buffer);
+                            source.forEach((v, i) => target[i] = source[i]);
+                            resolve(<ArrayBuffer>target.buffer);
+                        }
+                        
+                    }
+                });
+            });
+        }
         return new Promise((resolve, reject) => {
             const type = (format === FSFormat.text) ? 'text/plain; charset=utf-8' : 'application/octet-stream';
-            const slice = file.slice(offset, offset + length, type);
+            const slice = (<File>file).slice(offset, offset + length, type);
             const reader = new FileReader();
             reader.onload = function (e) { resolve(this.result); };
             reader.onerror = function (e) { reject(e); };
@@ -503,12 +616,62 @@ class FSFile extends FSys {
         });
     }
 
+    static stream(fullname: string, format: FSFormat, ondata: (data: string | ArrayBuffer) => void): Promise<void> {
+        let offset = 0;
+        if (ISNODE) {
+            return FSFile.get(fullname)
+            .then(file => {
+                return new Promise<void>((resolve, reject) => {
+                    const loop = () => {
+                    const expected = 64*1024;
+                    FSFile.slice(file,FSFormat.arraybuffer,offset,expected)
+                        .then( (data: ArrayBuffer) => {
+                            offset+=data.byteLength;
+                            try {
+                                ondata && ondata(data);
+                                return (data.byteLength < expected) ?  resolve() : loop() 
+                            } catch (e) {
+                              return reject(new Error(`error while parsing file ${fullname} : ${e.message}`));   
+                            }
+                        });
+                    };
+                    loop();
+                });
+            })    
+        }
+        return FSFile.get(fullname)
+            .then(file => {
+                return new Promise<void>((resolve, reject) => {
+                    const loop = () => {
+                        const expected = 64 * 1024;
+                        FSFile.slice(file, FSFormat.arraybuffer, offset, expected)
+                            .then((data: ArrayBuffer) => {
+                                offset += data.byteLength;
+                                try {
+                                    ondata && ondata(data);
+                                    return (data.byteLength < expected) ? resolve() : loop()
+                                } catch (e) {
+                                    return reject(new Error(`error while parsing file ${fullname} : ${e.message}`));
+                                }
+                            });
+                    };
+                    loop();
+                });
+            })
+    }
     /**
      * get File object for full path name
      * @param fullname - full path name of the file
      * @param format - format of the data to read as
      */
     static get(fullname: string): Promise<any> {
+        if (ISNODE) {
+            return new Promise((resolve, reject) => {
+                if (this.hasDisk(fullname)) return reject(new Error('FSDir.get disk selector not implemented do not use \"C:\", \"D:\" etc ...]'));
+                const file = fs.openSync(fullname, 'r');
+                resolve(file);
+            });
+        }
         return new Promise((resolve, reject) => {
             FSys.fs.root.getFile(fullname, { create: false }, (fentry) => {
                 fentry.file(file => resolve(file), reject);
@@ -522,14 +685,19 @@ class FSFile extends FSys {
      * @returns a promise that remove the file an resolve in success with no params (or fileError in reject case)
      */
     static remove(fullname: string): Promise<any> {
-        // return FSDir.read(path).then((dentry) => {
+        if (ISNODE) {
+            return new Promise((resolve, reject) => {
+                if (this.hasDisk(fullname)) return reject(new Error('FSDir.remove disk selector not implemented do not use \"C:\", \"D:\" etc ...]'));
+                fs.unlinkSync(fullname);
+                resolve();
+            });    
+        }
         return new Promise((resolve, reject) => {
             FSys.fs.root.getFile(fullname, { create: false }, (fentry) => fentry.remove(() => {
                 SYNCMAP.removeFile(fullname);
                 resolve();
             }, reject), reject);
         });
-        // });
     }
 
     /**
@@ -548,9 +716,27 @@ class FSFile extends FSys {
      * @returns a promise that read the file an resolve in success with file metadata (or fileError in reject case)
      */
     static metadata(fullname: string): Promise<any> {
+        if (ISNODE) {
+            return new Promise ((resolve,reject) => {
+                if (this.hasDisk(fullname)) return reject(new Error('FSDir.create disk selector not implemented do not use \"C:\", \"D:\" etc ...]'));
+                fs.stat(fullname,(err,stats) => err ? resolve(null) : resolve({modificationTime: stats.mtime, size: stats.size}));
+            });
+        }
         return new Promise((resolve, reject) => {
             FSys.fs.root.getFile(fullname, { create: false }, (fentry) => fentry.getMetadata(resolve, reject), reject);
         });
+    }
+
+    static release(file: number):  Promise<void> {
+        if (ISNODE) {
+            return new Promise((resolve) => {
+                try {
+                    fs.closeSync(file);
+                } catch(e) {}
+                resolve();
+            });    
+        }
+        return Promise.resolve();
     }
 }
 
@@ -951,4 +1137,4 @@ class Sync {
     }
 }
 
-export { Sync, Download, FSDir, FSFile, FSFormat };
+export { Sync, Download, FSys, FSDir, FSFile, FSFormat };

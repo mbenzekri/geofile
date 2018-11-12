@@ -1,8 +1,8 @@
 'use strict';
 import * as ol from './ol-debug';
 import { _ } from './polyfill';
-import { Geofile, GeofileFeature, GeofileOptions, GeofileFilterOptions } from './geofile';
-import { FSFile, FSFormat } from './sync';
+import { Geofile, GeofileFeature, GeofileOptions, GeofileFilterOptions, GeofileBinaryParser, GeofileFiletype } from './geofile';
+import * as fs from './sync';
 _();
 
 enum STATE {
@@ -34,7 +34,7 @@ class CsvOptions {
     skip?: number;      // Specifies the number of lines at the beginning of a data file to skip over, prior to parsing header
 }
 
-export class CsvParser {
+export class CsvParser extends GeofileBinaryParser {
 
     private options: CsvOptions = {
         separator: ',',   // ','
@@ -50,17 +50,12 @@ export class CsvParser {
     private row: any[]|any = [];
     private propsarr = [];
 
-    private constructor(toparse: string, options?: any) {
-        // this.options.applyTo(options.applyTo({}));
+    constructor(filename: string, options?: any) {
+        super(filename, GeofileFiletype.CSV,true);
         if (options.separator) { this.options.separator = options.separator; }
         if (options.header) { this.options.header = options.header; }
         if (options.lonfield) { this.options.lonfield = options.lonfield; }
         if (options.latfield) { this.options.latfield = options.latfield; }
-        const te = new TextEncoder();
-        const arrbuf = te.encode(toparse);
-        for (let i = 0; i < toparse.length; i++) { this.onChar(toparse.charAt(i)); }
-        this.pushField();
-        this.buildFeature();
     }
 
     static parse(toparse: string, options?: CsvOptions): any[]| any {
@@ -242,20 +237,20 @@ export class Csv extends Geofile {
 
     /** internal method to get File object for Geojson file for random access */
     loadFeatures(): Promise<any> {
-        return FSFile.get(this.filename)
+        return fs.FSFile.get(this.filename)
             .then(file => {
                 this.file = file;
                 const handle = this.getHandle(0);
-                return FSFile.slice(this.file, FSFormat.text, 0, handle.pos);
+                return fs.FSFile.slice(this.file, fs.FSFormat.text, 0, handle.pos);
             })
             .then(slice => {
-                this.header = CsvParser.parse(slice, { separator: ';' })[0];
+                this.header = CsvParser.parse(<string>slice, { separator: ';' })[0];
             });
     }
 
     getFeature_(rank: number, options: GeofileFilterOptions = {}): Promise<GeofileFeature> {
         const handle = this.getHandle(rank);
-        return FSFile.slice(this.file, FSFormat.text, handle.pos, handle.len)
+        return fs.FSFile.slice(this.file, fs.FSFormat.text, handle.pos, handle.len)
             .then((slice: string) => {
                 const properties =  CsvParser.parse(slice, { separator: ';', header: this.header })[0];
                 if (properties.geometry) {
@@ -271,7 +266,7 @@ export class Csv extends Geofile {
     getFeatures_(rank: number, count = 1000, options: GeofileFilterOptions = {}): Promise<GeofileFeature[]> {
         const hmin = this.getHandle(rank);
         const hmax = this.getHandle(rank + count - 1);
-        return FSFile.slice(this.file, FSFormat.text, hmin.pos, (hmax.pos + hmax.len - hmin.pos))
+        return fs.FSFile.slice(this.file, fs.FSFormat.text, hmin.pos, (hmax.pos + hmax.len - hmin.pos))
             .then((slice: string) => {
                 const array = CsvParser.parse(slice, { separator: ';', header: this.header });
                 const features = array.map(properties => {

@@ -1,6 +1,6 @@
 import { Component, OnInit, ChangeDetectorRef } from '@angular/core';
-import * as ol from '../../../../dist_l/ol-debug';
-import * as gf from '../../../../dist_l/geolib';
+import * as ol from '../../../../geolib/src/ol-debug';
+import * as gf from 'geofile';
 
 @Component({
     selector: 'sk-map-test',

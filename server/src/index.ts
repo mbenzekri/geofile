@@ -1,12 +1,6 @@
 
-// let Shapefile = require('./Shapefile').Shapefile;
 import { conf } from './config';
-import { _ } from './polyfill';
-import { FSys, FSDir, FSFile } from './sync';
-import { GeojsonParser } from './geojson';
-import { GeofileIndexer } from './geofile';
-import { ShapefileShpParser, ShapefileDbfParser } from './shapefile';
-import { CsvParser } from './csv';
+import * as gf from 'geofile';
 
 const argv = process.argv
 if (argv.length === 3 || (argv.length == 4 && argv[3] === '-clean')) {
@@ -15,29 +9,29 @@ if (argv.length === 3 || (argv.length == 4 && argv[3] === '-clean')) {
     const clean = argv[3] === '-clean';
     const exclude = conf.exclude.map(str => new RegExp(str));
 
-    FSDir.files(georepo, /.idx$/i, true)
+    gf.FSDir.files(georepo, /.idx$/i, true)
         .then(files => {
-            return clean ? Promise.all(files.map(file => FSFile.remove(file.fullpath))) : Promise.resolve([]) 
+            return clean ? Promise.all(files.map(file => gf.FSFile.remove(file.fullpath))) : Promise.resolve([]) 
         })
         .then(_ => { 
-            return FSDir.files(georepo, /\.(geojson|shp|json|csv)$/i, true)
+            return gf.FSDir.files(georepo, /\.(geojson|shp|json|csv)$/i, true)
         })
         .then(geofiles => {
             const promises = [];
             geofiles.forEach(file => {
-                const ext = FSys.extname(file.fullpath).toLowerCase();
-                const basename = FSys.basename(file.fullpath);
+                const ext = gf.FSys.extname(file.fullpath).toLowerCase();
+                const basename = gf.FSys.basename(file.fullpath);
                 const fileconf = conf.indexes[basename];
                 switch (ext) {
                     case '.geojson':
                     case '.json':
-                        promises.push(GeofileIndexer.index(fileconf, [new GeojsonParser(file.fullpath)]));
+                        promises.push(gf.GeofileIndexer.index(fileconf, [new gf.GeojsonParser(file.fullpath)]));
                         break;
                     case '.csv':
-                        promises.push(GeofileIndexer.index(fileconf, [new CsvParser(file.fullpath, { separator: ';' })]));
+                        promises.push(gf.GeofileIndexer.index(fileconf, [new gf.CsvParser(file.fullpath, { separator: ';' })]));
                         break;
                     case '.shp':
-                        promises.push(GeofileIndexer.index(fileconf, [new ShapefileShpParser(file.fullpath), new ShapefileDbfParser(file.fullpath)]));
+                        promises.push(gf.GeofileIndexer.index(fileconf, [new gf.ShapefileShpParser(file.fullpath), new gf.ShapefileDbfParser(file.fullpath)]));
                         break;
                 }
             });
@@ -45,13 +39,13 @@ if (argv.length === 3 || (argv.length == 4 && argv[3] === '-clean')) {
         })
         .then(_ => {
             console.log(`indexing terminated successfull in ${Math.round((Date.now() - start) / 100)} secs`);
-            return FSDir.files(georepo,/.*/, true)
+            return gf.FSDir.files(georepo,/.*/, true)
         })
         .then(files => {
             const repolist = files.filter(file => !exclude.some(re => re.test(file.fullpath)));
             const upfolder = georepo.replace(/[\\/]+/g,'/').replace(/[^/]*$/,'');
             files.forEach(file =>  file.fullpath = file.fullpath.replace(/[\\/]+/g,'/').replace(upfolder,'') )
-            return FSFile.write(georepo + '.json', JSON.stringify(repolist))
+            return gf.FSFile.write(georepo + '.json', JSON.stringify(repolist))
         })
         .then(_ => console.log(`Updated repository file liste for ${georepo}`))
         .catch(error => console.log(`indexing fail while processing ${error}`));

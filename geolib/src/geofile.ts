@@ -1,15 +1,42 @@
 'use strict';
 import { binrbush } from './binrbush';
-import * as ol from './ol-debug';
+import * as proj4 from 'proj4';
 import { _ } from './polyfill';
 import { BinRtree } from './binrtree';
 import * as fs from './sync';
 _();
 
-const WGS84SPHERE = new ol.Sphere(6378137);
-const WGS84 = ol.proj.get('EPSG:4326');
+const WGS84 = 'EPSG:4326';
 const HANDLE_SIZE = 10;
 const INDEX_MD_SIZE = 68;
+
+const transformExtent = function (extent: number[], src: string, dest: string): number[] {
+    const t = proj4(src, dest);
+    const linestr = [
+        t.forward([extent[0], extent[1]]),
+        t.forward([extent[2], extent[1]]),
+        t.forward([extent[2], extent[3]]),
+        t.forward([extent[0], extent[3]]),
+    ];
+    const xmin = Math.min(linestr[0][0], linestr[1][0], linestr[2][0], linestr[3][0]);
+    const xmax = Math.max(linestr[0][0], linestr[1][0], linestr[2][0], linestr[3][0]);
+    const ymin = Math.min(linestr[0][1], linestr[1][1], linestr[2][1], linestr[3][1]);
+    const ymax = Math.max(linestr[0][1], linestr[1][1], linestr[2][1], linestr[3][1]);
+    return [xmin, ymin, xmax, ymax];
+}
+
+const haversineDistance = function (c1: number[], c2: number[]) {
+    const radius = 6378137;
+    const lat1 = c1[1] * Math.PI / 180;
+    const lat2 = c2[1] * Math.PI / 180;
+    const deltaLatBy2 = (lat2 - lat1) / 2;
+    const deltaLonBy2 = ((c2[0] - c1[0]) * Math.PI / 180) / 2;
+    const a = Math.sin(deltaLatBy2) * Math.sin(deltaLatBy2) +
+        Math.sin(deltaLonBy2) * Math.sin(deltaLonBy2) *
+        Math.cos(lat1) * Math.cos(lat2);
+    return 2 * radius * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
 
 export enum GeofileFiletype {
     CSV,
@@ -21,12 +48,55 @@ export enum GeofileFiletype {
     GML3,
     KML
 }
+export enum GeofileGeomtype {
+    Point = 'Point',
+    MultiPoint = 'MultiPoint',
+    LineString = "LineString",
+    MultiLineString = "MultiLineString",
+    Polygon = "Polygon",
+    MultiPolygon = "MultiPolygon",
+    GeometryCollection = "GeometryCollection"
+}
 
-export class GeofileFeature extends ol.Feature {
-    rank: number;
-    proj: ol.proj.Projection;
-    geofile: Geofile;
-    distance: number;
+export declare type GeofileGeometry = {
+    type: GeofileGeomtype, 
+    coordinates: number[] | number[][] | number[][][], 
+}
+
+export class GeofileFeature {
+    geometry?: GeofileGeometry;
+    properties?: any = {};
+    rank?: number;
+    proj?: string;
+    geofile?: Geofile;
+    distance?: number;
+
+    constructor(geometry: GeofileGeometry, properties = {}) {
+        this.geometry = geometry;
+        this.properties = properties ;
+    }
+    transform(dest: string) {
+        const transform = proj4(this.proj, dest);
+        let transloop = (arr: any[]): any[] => {
+            return !arr ? null
+                : (arr.length >= 2 && !Array.isArray(arr[0]))
+                    ? transform.forward(arr)
+                    : arr.map(subarr => transloop(subarr))
+        }
+        return (typeof this.geometry === 'string') ? null : transloop(this.geometry.coordinates)
+    }
+    intersectsExtent(extent: number[]): boolean {
+        return true;
+    }
+    intersectsCoordinate(coords: number[]): boolean {
+        return true;
+    }
+    get(attribute: string) {
+        return this.properties ? this.properties[attribute] : null;
+    }
+    getClosestPoint(point: number[]): number[] {
+        return [];
+    }
 }
 
 export interface GeofileOptions {
@@ -47,7 +117,7 @@ export interface GeofileOptions {
     /** maximum scale denominator for visible scale */
     maxscale?: number;
     /** style function  */
-    style?: ol.StyleFunction | ol.style.Style | ol.style.Style[];
+    style?: Function;
     /** schema to describe data structure */
     schema?: any;
 }
@@ -64,13 +134,13 @@ interface GeofileHandle {
  */
 export interface GeofileFilterOptions {
     /** target projection all feature will be transform into this projection if necessary */
-    proj?: ol.proj.Projection;
+    proj?: 'WGS84';
     /** do not use (used for internal index filtering ) */
-    _filter?: Function[];
+    _filter?: ((feature: GeofileFeature) => boolean)[];
     /** filter function only features that match this test function are returned*/
-    filter?: Function;
+    filter?: (feature: GeofileFeature) => boolean;
     /** action function applied to all returned features (caution! above projection applied)*/
-    action?: Function;
+    action?: (feature: GeofileFeature) => void;
     /** cache for optimisation */
     cache?: Map<number, GeofileFeature>;
     /** tolerance for pointSearch */
@@ -97,26 +167,6 @@ interface GeofileIndex {
     dv: DataView;
 }
 
-/** default style definition */
-const fill = new ol.style.Fill({
-    color: 'rgba(255,255,255,0.4)'
-});
-const stroke = new ol.style.Stroke({
-    color: '#3399CC',
-    width: 1.25
-});
-const DEFAULT_STYLE = [
-    new ol.style.Style({
-        image: new ol.style.Circle({
-            fill: fill,
-            stroke: stroke,
-            radius: 5
-        }),
-        fill: fill,
-        stroke: stroke
-    })
-];
-
 
 /**
  * File System spatial data class
@@ -126,14 +176,12 @@ export abstract class Geofile {
     /** if true time statistics are logged */
     private static TIMEON = true;
     /** default style of Geofile class when not given */
-    static readonly style = DEFAULT_STYLE;
+    static readonly style = null;
     /* geofile objects set */
     private static readonly ALL = new Map<string, Geofile>();
 
     /** geofile dataset file name  */
     readonly filename: string;
-    /** geofile dataset projection name */
-    readonly srs: string;
     /** minimum scale for dataset display */
     readonly minscale: number;
     /** maximum scale for dataset display */
@@ -145,9 +193,9 @@ export abstract class Geofile {
     /** grouping name for a set of geofile dataset */
     readonly group: string;
     /** openlayers style function to display features for this datatset */
-    readonly style: ol.StyleFunction | ol.style.Style | ol.style.Style[];
+    readonly style: Function;
     /** geofile dataset projection calculated through this.srs */
-    readonly proj: ol.proj.Projection;
+    readonly proj = 'WGS84';
     /** feature count for this datatset */
     readonly count: number;
     /** true if dataset is loaded (call load() method) */
@@ -184,7 +232,7 @@ export abstract class Geofile {
         return this.getFeature_(rank, options)
             .then(feature => {
                 if (feature) {
-                    feature.setId(this.name + '_' + rank);
+                    // feature.setId(this.name + '_' + rank);
                     feature.proj = this.proj;
                     feature.rank = rank;
                     feature.geofile = this;
@@ -196,14 +244,14 @@ export abstract class Geofile {
 
     getFeatures(rank: number, count = 100, options: GeofileFilterOptions = {}): Promise<GeofileFeature[]> {
         this.assertLoaded();
-        if (rank < 0 || rank >= this.count) {return Promise.resolve([]); }
-        if (count <= 0) {return Promise.resolve([]); }
-        count = Math.min(count , this.count - rank);
+        if (rank < 0 || rank >= this.count) { return Promise.resolve([]); }
+        if (count <= 0) { return Promise.resolve([]); }
+        count = Math.min(count, this.count - rank);
         return this.getFeatures_(rank, count, options)
             .then(features => {
                 const result = [];
                 features.forEach(feature => {
-                    feature.setId(this.name + '_' + rank);
+                    // feature.setId(this.name + '_' + rank);
                     feature.proj = this.proj;
                     feature.rank = rank;
                     feature.geofile = this;
@@ -235,14 +283,13 @@ export abstract class Geofile {
 
     /** internal method to init/construct a Geofile object */
     private init(opts: GeofileOptions = {}) {
-        this['' + 'srs'] = opts.srs || 'EPSG:4326';
         this['' + 'minscale'] = opts.minscale || 0;
         this['' + 'maxscale'] = opts.maxscale || 10000;
         this['' + 'name'] = opts.name || this.filename.split('\\').pop().split('/').pop();
         this['' + 'title'] = opts.title || this.name;
         this['' + 'group'] = opts.group || 'root';
         this['' + 'style'] = opts.style || Geofile.style;
-        this['' + 'proj'] = ol.proj.get(this.srs);
+        this['' + 'proj'] = opts.srs;
     }
 
     /**
@@ -325,7 +372,7 @@ export abstract class Geofile {
      * @param cluster the cluster where the rank was found
      * @returns the calculated bbox
      */
-    private clusterBbox(rank: number, cluster: number[]): ol.Extent {
+    private clusterBbox(rank: number, cluster: number[]): number[] {
         const handle = this.getHandle(rank);
         const wtile = Math.abs(cluster[2] - cluster[0]) / 16;
         const htile = Math.abs(cluster[3] - cluster[1]) / 16;
@@ -348,22 +395,21 @@ export abstract class Geofile {
     protected apply(feature: GeofileFeature, options: GeofileFilterOptions): GeofileFeature {
         if (options._filter && options._filter.some(function (func) { return !func(feature); })) { return undefined; }
         if (options.proj && options.proj !== (feature as any).proj) {
-            feature.getGeometry().transform((feature as any).proj, options.proj);
-            (feature as any).proj = options.proj;
+            feature.transform(options.proj);
         }
         if (options.filter && !options.filter(feature)) { return undefined; }
         if (options.action) { options.action(feature); }
         return feature;
     }
 
-    private setFilter(opts: GeofileFilterOptions, filter: Function) {
+    private setFilter(opts: GeofileFilterOptions, filter: (feature: GeofileFeature) => boolean) {
         const options: GeofileFilterOptions = opts.applyTo({ _filter: [] });
         options._filter.push(filter);
         return options;
     }
 
     /** return true if bbox1 intersects bbox2, false otherwise */
-    private intersects(bbox1: ol.Extent, bbox2: ol.Extent): boolean {
+    private intersects(bbox1: number[], bbox2: number[]): boolean {
         return bbox2[0] <= bbox1[2] && bbox2[1] <= bbox1[3] &&
             bbox2[2] >= bbox1[0] && bbox2[3] >= bbox1[1];
 
@@ -397,78 +443,40 @@ export abstract class Geofile {
         });
     }
 
-    bboxSearch(bbox: ol.Extent, options: GeofileFilterOptions = {}): Promise<GeofileFeature[]> {
+    bboxSearch(bbox: number[], options: GeofileFilterOptions = {}): Promise<GeofileFeature[]> {
         this.assertLoaded();
-        const projbbox = options.proj ? ol.proj.transformExtent(bbox, this.proj, options.proj) : null;
+        const projbbox = options.proj ? transformExtent(bbox, this.proj, options.proj) : null;
         const start = Date.now();
 
         options = this.setFilter(options, (feature: GeofileFeature) => {
-            const geom = feature.getGeometry();
             const abbox = (feature.proj === options.proj) ? projbbox : bbox;
-            const res = (geom && (geom as any).intersectsExtent) ? (geom as any).intersectsExtent(abbox) : false;
+            const res = feature.intersectsExtent(abbox);
             return res;
         });
 
         // parcours de l'index geographique.
         const bboxlist = this.rtree.search(bbox).filter(ibbox => this.intersects(ibbox, bbox));
-        const promises = bboxlist.map( ibbox => {
-            return this.getFeatures(ibbox[4], ibbox[5], options );
+        const promises = bboxlist.map(ibbox => {
+            return this.getFeatures(ibbox[4], ibbox[5], options);
         });
-        const selectivity = Math.round( 100 * bboxlist.reduce((p, c) => p + c[5], 0) / this.count );
+        const selectivity = Math.round(100 * bboxlist.reduce((p, c) => p + c[5], 0) / this.count);
 
         return Promise.cleanPromiseAll(promises)
-        .then((features) => {
-            const elapsed = (Date.now() - start) ;
-            const best = Math.round( 100 * features.length / this.count );
-            const objsec =  Math.round( features.length / (elapsed / 1000) );
-            console.log(`Geofile.bboxSearch [${this.name}]: ${features.length} o / ${ elapsed } ms /  ${objsec} obj/s sel: ${selectivity}% (vs ${best}%)`);
-            return features;
-        });
-    }
-
-    addIndexTiles(map: ol.Map) {
-        const tiles = [];
-        const srcproj = this.proj;
-        this.rtree._all(0, tiles);
-        const features = tiles.map(function (tile) {
-            const geometry = new ol.geom.Polygon([[
-                [tile[0], tile[1]],
-                [tile[2], tile[1]],
-                [tile[2], tile[3]],
-                [tile[0], tile[3]],
-                [tile[0], tile[1]]
-            ]]);
-            geometry.transform(srcproj, map.getView().getProjection());
-            const feature = new ol.Feature({ num: tile[4] / 100, geometry });
-            return feature;
-        });
-        const vectorSource = new ol.source.Vector({});
-        const vlayer = new ol.layer.Vector({
-            source: vectorSource,
-            style: [new ol.style.Style({
-                stroke: new ol.style.Stroke({
-                    color: 'red',
-                    width: 2
-                })
-            })]
-        });
-        vectorSource.addFeatures(features);
-        map.addLayer(vlayer);
-        const tilelayer = new ol.layer.Tile({
-            source: new ol.source.TileDebug({
-                projection: 'EPSG:3857',
-                tileGrid: ol.tilegrid.createXYZ({ maxZoom: 22 })
-            })
-        });
-        map.addLayer(tilelayer);
+            .then((features) => {
+                const elapsed = (Date.now() - start);
+                const best = Math.round(100 * features.length / this.count);
+                const objsec = Math.round(features.length / (elapsed / 1000));
+                console.log(`Geofile.bboxSearch [${this.name}]: ${features.length} o / ${elapsed} ms /  ${objsec} obj/s sel: ${selectivity}% (vs ${best}%)`);
+                return features;
+            });
     }
 
     pointSearch(lon: number, lat: number, options: GeofileFilterOptions = {}): Promise<GeofileFeature[]> {
         this.assertLoaded();
         const tol = options.tolerance ? options.tolerance : 0.00001;
-        options = this.setFilter(options, (feature) => {
-            ol.proj.transform([lon, lat], this.proj, feature.proj);
-            return feature.getGeometry().intersectsCoordinate([lon, lat]);
+        options = this.setFilter(options, (feature: GeofileFeature) => {
+            const point = proj4(this.proj, feature.proj).forward([lon, lat]);
+            return feature.intersectsCoordinate(point);
         });
         return this.bboxSearch([lon - tol, lat - tol, lon + tol, lat + tol], options);
     }
@@ -479,20 +487,20 @@ export abstract class Geofile {
      * @param rorb raduis or bbox
      * @param options filter options
      */
-    nearestSearch(lon: number, lat: number, rorb: number | ol.Extent, options: GeofileFilterOptions = {}): Promise<GeofileFeature> {
+    nearestSearch(lon: number, lat: number, rorb: number | number[], options: GeofileFilterOptions = {}): Promise<GeofileFeature> {
         this.assertLoaded();
-        const wgs84pt = ol.proj.transform([lon, lat], this.proj, WGS84);
+        const wgs84pt = proj4(this.proj, WGS84).forward([lon, lat]);
         let bbox;
         if (Array.isArray(rorb)) {
             bbox = rorb;
         } else {
-            const unitpermeter = 1 / this.proj.getMetersPerUnit();
+            const unitpermeter = 1 / proj4.defs(this.proj).to_meter;
             const wgs84r = rorb * unitpermeter;
             bbox = [wgs84pt[0] - wgs84r, wgs84pt[1] - wgs84r, wgs84pt[0] + wgs84r, wgs84pt[1] + wgs84r];
-            options = this.setFilter(options, (feature) => {
-                const closest = feature.getGeometry().getClosestPoint([lon, lat]);
-                const closest_wgs84 = ol.proj.transform(closest, feature.proj, WGS84);
-                feature.distance = WGS84SPHERE.haversineDistance(wgs84pt, closest_wgs84);
+            options = this.setFilter(options, (feature: GeofileFeature) => {
+                const closest = feature.getClosestPoint([lon, lat]);
+                const closest_wgs84 = proj4(feature.proj, WGS84).forward(closest);
+                feature.distance = haversineDistance(wgs84pt, closest_wgs84);
                 return (feature.distance <= wgs84r);
             });
         }
@@ -583,7 +591,7 @@ export abstract class Geofile {
         const hash = value.fuzzyhash();
         const values = String.fuzzyExtend(hash);
         values.push(hash);
-        options = this.setFilter(options, f => clean.levenshtein(f.get(attr).clean()) < maxlevens );
+        options = this.setFilter(options, f => clean.levenshtein(f.get(attr).clean()) < maxlevens);
         return this.binarySearch(index, values, compare, options)
             .then((features) => {
                 let sorted = [];
@@ -683,10 +691,10 @@ export abstract class Geofile {
      * @param projection the target map projectiion
      * @returns corresponding resolution for scale
      */
-    getScale(resolution: number, projection: ol.proj.Projection): number {
+    getScale(resolution: number, projection: string): number {
         // const units = projection.getUnits();
         const dpi = 25.4 / 0.28;
-        const mpu = projection.getMetersPerUnit(); // MBZ TODO A REVOIR CALCUL D'ECHELLE
+        const mpu = proj4.defs(projection).to_meter; // MBZ TODO A REVOIR CALCUL D'ECHELLE
         const scale = resolution * mpu * 39.37 * dpi;
         return scale;
     }
@@ -697,22 +705,81 @@ export abstract class Geofile {
      * @param projection the target map projectiion
      * @returns corresponding resolution for scale
      */
-    getResolution(scale: number, projection: ol.proj.Projection): number {
+    getResolution(scale: number, projection: string): number {
         // const units = projection.getUnits();
         const dpi = 25.4 / 0.28;
-        const mpu = projection.getMetersPerUnit(); // MBZ TODO A REVOIR CALCUL D'ECHELLE
+        const mpu = proj4.defs(projection).to_meter;
         const resolution = scale / (mpu * 39.37 * dpi);
         return resolution;
+    }
+
+    addIndexTiles(map: any, ol: any) {
+        const tiles = [];
+        const srcproj = this.proj;
+        this.rtree._all(0, tiles);
+        const features = tiles.map(function (tile) {
+            const geometry = new ol.geom.Polygon([[
+                [tile[0], tile[1]],
+                [tile[2], tile[1]],
+                [tile[2], tile[3]],
+                [tile[0], tile[3]],
+                [tile[0], tile[1]]
+            ]]);
+            geometry.transform(srcproj, map.getView().getProjection());
+            const feature = new ol.Feature({ num: tile[4] / 100, geometry });
+            return feature;
+        });
+        const vectorSource = new ol.source.Vector({});
+        const vlayer = new ol.layer.Vector({
+            source: vectorSource,
+            style: [new ol.style.Style({
+                stroke: new ol.style.Stroke({
+                    color: 'red',
+                    width: 2
+                })
+            })]
+        });
+        vectorSource.addFeatures(features);
+        map.addLayer(vlayer);
+        const tilelayer = new ol.layer.Tile({
+            source: new ol.source.TileDebug({
+                projection: 'EPSG:3857',
+                tileGrid: ol.tilegrid.createXYZ({ maxZoom: 22 })
+            })
+        });
+        map.addLayer(tilelayer);
     }
 
     /**
      * add this geofile to an openlayer Map as an ol.layer.Vector
      * @param map an openlayers 3+ Map
+     * @param ol an openlayers 3+ global object
      */
-    addAsVector(map: ol.Map) {
+    addAsVector(map: any, ol: any) {
         let last_extent = ol.extent.createEmpty();
         const cache = this.newCache();
         let vsource: ol.source.Vector;
+        let format = new ol.format.GeoJSON();
+        /** default style definition */
+        const fill = new ol.style.Fill({
+            color: 'rgba(255,255,255,0.4)'
+        });
+        const stroke = new ol.style.Stroke({
+            color: '#3399CC',
+            width: 1.25
+        });
+        const DEFAULT_STYLE = [
+            new ol.style.Style({
+                image: new ol.style.Circle({
+                    fill: fill,
+                    stroke: stroke,
+                    radius: 5
+                }),
+                fill: fill,
+                stroke: stroke
+            })
+        ];
+
 
         // we define a loader for vector source
         const loader = (extent, resolution, proj) => {
@@ -724,7 +791,7 @@ export abstract class Geofile {
                 this.bboxSearch(extent, { proj, cache })
                     .then((features) => {
                         vsource.clear();
-                        vsource.addFeatures(features);
+                        vsource.addFeatures(features.map(f => format.readFeature(f)));
                     });
             } else {
                 vsource.clear();
@@ -736,7 +803,7 @@ export abstract class Geofile {
             renderMode: 'image',
             visible: true,
             source: vsource,
-            style: this.style,
+            style: this.style ? this.style : DEFAULT_STYLE,
             minResolution: this.getResolution(this.minscale, map.getView().getProjection()),
             maxResolution: this.getResolution(this.maxscale, map.getView().getProjection())
         });
@@ -1187,17 +1254,17 @@ export class GeofileIndexer {
     }
 
     write(): Promise<number> {
-            const total = this.header.byteLength + this.metadata.byteLength + this.indexes.reduce((p, c) => p + c.buffer.byteLength, 0);
-            const buf = new ArrayBuffer(total);
-            const target = new Uint8Array(buf);
-            let offset = 0;
-            // copying data in one buffer 
-            (new Uint8Array(this.header)).forEach((val, i) => target[offset++] = val);
-            (new Uint8Array(this.metadata)).forEach((val, i) => target[offset++] = val);;
-            this.indexes.forEach((index) => {
-                (new Uint8Array(index.buffer)).forEach((val, i) => target[offset++] = val);
-            });
-            return fs.FSFile.write(this.indexfilename, buf)
+        const total = this.header.byteLength + this.metadata.byteLength + this.indexes.reduce((p, c) => p + c.buffer.byteLength, 0);
+        const buf = new ArrayBuffer(total);
+        const target = new Uint8Array(buf);
+        let offset = 0;
+        // copying data in one buffer 
+        (new Uint8Array(this.header)).forEach((val, i) => target[offset++] = val);
+        (new Uint8Array(this.metadata)).forEach((val, i) => target[offset++] = val);;
+        this.indexes.forEach((index) => {
+            (new Uint8Array(index.buffer)).forEach((val, i) => target[offset++] = val);
+        });
+        return fs.FSFile.write(this.indexfilename, buf)
     }
 
 }

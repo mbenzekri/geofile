@@ -1,6 +1,7 @@
 import { 
     Geofile, 
-    GeofileFeature, 
+    GeofileFeature,
+    GeofileGeometry,
     GeofileOptions, 
     GeofileFilterOptions,
     GeofileIndexer,
@@ -19,7 +20,8 @@ export {
     Sync, Download, FSys, FSDir, FSFile, FSFormat,
     Geofile, 
     GeofileFiletype,
-    GeofileFeature, 
+    GeofileFeature,
+    GeofileGeometry, 
     GeofileOptions, 
     GeofileFilterOptions,
     GeofileIndexer, 

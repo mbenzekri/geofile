@@ -1,9 +1,17 @@
 'use strict';
-import * as ol from './ol-debug';
+import * as jsts from 'jsts';
 import { _ } from './polyfill';
-import { Geofile, GeofileFeature, GeofileOptions, GeofileFilterOptions, GeofileBinaryParser, GeofileFiletype } from './geofile';
+import { Geofile, GeofileFeature,GeofileGeometry, GeofileOptions, GeofileFilterOptions, GeofileBinaryParser, GeofileFiletype } from './geofile';
 import * as fs from './sync';
 _();
+
+const WKTREADER = new jsts.io.WKTReader();
+const GEOJSONWRITER = new jsts.io.GeoJSONWriter();
+const wktread = function(wkt: string): GeofileGeometry {
+    const geometry =  WKTREADER.read(wkt);
+    const gjsgeom =  <GeofileGeometry>GEOJSONWRITER.write(geometry);
+    return gjsgeom;
+};
 
 enum STATE {
     ROW = 'ROW',
@@ -215,7 +223,6 @@ export class CsvParser extends GeofileBinaryParser {
  */
 export class Csv extends Geofile {
 
-    private static FORMAT = new ol.format.WKT();
     /** data file csv */
     private file: File;
     private header: any[];
@@ -254,10 +261,9 @@ export class Csv extends Geofile {
             .then((slice: string) => {
                 const properties =  CsvParser.parse(slice, { separator: ';', header: this.header })[0];
                 if (properties.geometry) {
-                    const geometry = Csv.FORMAT.readGeometry(properties.geometry);
-                    const feature = (new ol.Feature(geometry) as GeofileFeature);
+                    const geometry =  wktread(properties.geometry);
                     delete properties.geometry;
-                    feature.setProperties(properties);
+                    const feature: GeofileFeature = new GeofileFeature(geometry,properties);
                     return feature;
                 }
                 return null;
@@ -271,10 +277,9 @@ export class Csv extends Geofile {
                 const array = CsvParser.parse(slice, { separator: ';', header: this.header });
                 const features = array.map(properties => {
                     if (properties.geometry) {
-                        const geometry = Csv.FORMAT.readGeometry(properties.geometry);
-                        const feature = (new ol.Feature(geometry) as GeofileFeature);
+                        const geometry =  wktread(properties.geometry);
                         delete properties.geometry;
-                        feature.setProperties(properties);
+                        const feature: GeofileFeature = new GeofileFeature(geometry,properties);
                         return feature;
                     }
                     return null;

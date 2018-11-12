@@ -1,5 +1,4 @@
 'use strict';
-import * as ol from './ol-debug';
 import { Parser } from './jsonparse';
 import { _ } from './polyfill';
 import { Geofile, GeofileFeature, GeofileOptions, GeofileFilterOptions, GeofileParser, GeofileFiletype} from './geofile';
@@ -13,7 +12,6 @@ _();
  */
 export class Geojson extends Geofile {
 
-    private static FORMAT = new ol.format.GeoJSON();
     /** data file geojson */
     file: File;
 
@@ -44,8 +42,7 @@ export class Geojson extends Geofile {
         const handle = this.getHandle(rank);
         return fs.FSFile.slice(this.file, fs.FSFormat.text, handle.pos, handle.len)
         .then(slice => {
-                const objson = JSON.parse(<string>slice);
-                const feature = (Geojson.FORMAT.readFeature(objson) as GeofileFeature);
+                const feature:GeofileFeature = JSON.parse(<string>slice);
                 return feature;
         });
     }
@@ -60,8 +57,7 @@ export class Geojson extends Geofile {
                 for (let i = 0; i < count; i++) {
                     const handle = this.getHandle(rank + i);
                     const text = td.decode(array.slice(handle.pos - hmin.pos, handle.pos - hmin.pos + handle.len));
-                    const objson = JSON.parse(text);
-                    const feature = (Geojson.FORMAT.readFeature(objson) as GeofileFeature);
+                    const feature:GeofileFeature = JSON.parse(text);
                     features.push(feature);
                 }
                 return features;

@@ -1,5 +1,4 @@
-import * as ol from './ol-debug';
-import { Geofile, GeofileFeature, GeofileOptions, GeofileFilterOptions, GeofileFiletype, GeofileBinaryParser, GeofileIndexFeature } from './geofile';
+import { Geofile, GeofileFeature, GeofileOptions, GeofileFilterOptions, GeofileFiletype, GeofileBinaryParser, GeofileIndexFeature, GeofileGeometry, GeofileGeomtype } from './geofile';
 import * as fs from './sync';
 
 interface ShpHeader {
@@ -195,7 +194,7 @@ export class Shapefile extends Geofile {
             .then(buffer => {
                 const dv = new DataView(<ArrayBuffer>buffer);
                 const geom = this.geometryReader(dv);
-                const feature = <GeofileFeature>new ol.Feature(geom);
+                const feature = new GeofileFeature(geom);
                 return feature;
             });
         const promisea = fs.FSFile.slice(this.dbffile, fs.FSFormat.arraybuffer, attrpos, attrpos + this.dbfheader.recordSize)
@@ -206,10 +205,8 @@ export class Shapefile extends Geofile {
             });
         return Promise.all([promiseg, promisea])
             .then((arr: [GeofileFeature, Object]) => {
-                const feature = arr[0];
-                const properties = arr[1];
-                feature.setProperties(properties);
-                return feature;
+                arr[0].properties = arr[1];
+                return arr[0];
             });
     }
 
@@ -224,7 +221,7 @@ export class Shapefile extends Geofile {
                     const handle = this.getHandle(rank);
                     const dv = new DataView(<ArrayBuffer>buffer, handle.pos - hmin.pos, handle.len);
                     const geom = this.geometryReader(dv);
-                    const feature = new ol.Feature(geom);
+                    const feature = new GeofileFeature(geom);
                     features.push(feature);
                     rank += 1;
                 }
@@ -305,7 +302,7 @@ export class Shapefile extends Geofile {
         return [dv.getFloat64(pos, true), dv.getFloat64(pos + 8, true), dv.getFloat64(pos + 16, true), dv.getFloat64(pos + 24, true)];
     }
 
-    geometryReader(dv: DataView): ol.geom.Geometry {
+    geometryReader(dv: DataView): GeofileGeometry {
         const geomtype: GEOMTYPE = dv.getInt32(0, true);
         switch (geomtype) {
             case GEOMTYPE.Point: return this.geomPoint(dv);
@@ -331,7 +328,7 @@ export class Shapefile extends Geofile {
      * Position    Field       Value   Type    Number  Byte Order
      * Byte 0      Shape Type  0       Integer 1       Little
      */
-    geomNullShape(dv: DataView) {
+    geomNullShape(dv: DataView): GeofileGeometry {
         return null;
     }
     /**
@@ -342,10 +339,10 @@ export class Shapefile extends Geofile {
      *  Byte 4      X           X       Double  1       Little
      *  Byte 12     Y           Y       Double  1       Little
      */
-    private geomPoint(dv: DataView) {
+    private geomPoint(dv: DataView): GeofileGeometry {
         const x = dv.getFloat64(4, true);
         const y = dv.getFloat64(12, true);
-        return new ol.geom.Point([x, y]);
+        return { type: GeofileGeomtype.Point, coordinates: [x, y] };
     }
     /**
      *  read a polyline geometry from the dataview
@@ -359,9 +356,9 @@ export class Shapefile extends Geofile {
      *
      *  Note: X = 44 + 4 * NumParts
      */
-    geomPolyLine(dv: DataView) {
-        const parts = [];
-        const lring = [];
+    geomPolyLine(dv: DataView): GeofileGeometry {
+        const parts: number[]  = [];
+        const lring: number[][] = [];
         const numparts = dv.getInt32(36, true);
         const numpoints = dv.getInt32(40, true);
         let ppos = 44;
@@ -378,7 +375,7 @@ export class Shapefile extends Geofile {
                 lring.push([x, y]);
             }
         }
-        return new ol.geom.LineString(lring);
+        return {type: GeofileGeomtype.Polygon, coordinates: lring};;
     }
     /**
      *  Type Polygon
@@ -392,7 +389,7 @@ export class Shapefile extends Geofile {
      *
      *  Note: X = 44 + 4 * NumParts
      */
-    geomPolygon(dv: DataView) {
+    geomPolygon(dv: DataView): GeofileGeometry {
         const numparts = dv.getInt32(36, true);
         const numpoints = dv.getInt32(40, true);
         const parts = [];
@@ -401,9 +398,9 @@ export class Shapefile extends Geofile {
             parts.push(dv.getInt32(ppos + (part * 4), true));
         }
         ppos = 44 + (4 * numparts);
-        const mpolygon = [];
+        const mpolygon: number[][][] = [];
         while (parts.length > 0) {
-            const lring = [];
+            const lring: number[][]= [];
             const deb = 2 * 8 * parts.shift();
             const fin = 2 * 8 * ((parts.length > 0) ? parts[0] : numpoints);
             for (let i = deb; i < fin; i += 16) {
@@ -412,10 +409,9 @@ export class Shapefile extends Geofile {
                 lring.push([x, y]);
             }
             lring.push(lring[0]);
-            mpolygon.push([lring]);
-
+            mpolygon.push(lring);
         }
-        return new ol.geom.MultiPolygon(mpolygon);
+        return {type: GeofileGeomtype.Polygon, coordinates: mpolygon};
     }
     /**
      *  Type Point
@@ -425,9 +421,9 @@ export class Shapefile extends Geofile {
      * Byte 36     NumPoints   NumPoints   Integer     1           Little
      * Byte 40     Points      Points      Point       NumPoints   Little
      */
-    geomMultiPoint(dv: DataView) {
+    geomMultiPoint(dv: DataView): GeofileGeometry {
         const numpoints = dv.getInt32(36, true);
-        const points = [];
+        const points: number[][] = [];
         let ipos = 40;
         for (let i = 0; i < numpoints; i++) {
             const x = dv.getFloat64(ipos, true);
@@ -435,7 +431,7 @@ export class Shapefile extends Geofile {
             points.push([x, y]);
             ipos += 16;
         }
-        return new ol.geom.MultiPoint(points);
+        return { type: GeofileGeomtype.MultiPoint, coordinates: points };
     }
 }
 

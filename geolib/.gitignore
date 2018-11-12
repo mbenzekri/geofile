@@ -2,7 +2,6 @@
 
 # compiled output
 dist/*
-!/dist/package.json
 /tmp
 /out-tsc
 /documentation

@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "jsts": "^2.0.2",
-    "proj4": "^2.5.0"
+    "proj4": "^2.5.0",
+    "text-encoding": "^0.7.0"
   }
 }

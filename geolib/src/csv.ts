@@ -71,6 +71,15 @@ export class CsvParser extends GeofileBinaryParser {
         return parser.propsarr;
     }
 
+    // send data to the automata 
+    onData(buffer: ArrayBuffer) {
+        const dv = new DataView(buffer);
+        for (let i = 0; i < buffer.byteLength; i++) {
+            this.onChar(String.fromCharCode(dv.getUint8(i)));
+            this.offset += 1;
+        }
+    }
+
     onChar(char: string) {
         this[this.state](char);
     }

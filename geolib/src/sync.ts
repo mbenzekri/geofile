@@ -313,7 +313,7 @@ abstract class FSys {
     }
 
     static extname(filename: string): string {
-        const arr = /\.[^]*$/.exec(filename);
+        const arr = /\.[^.]*$/.exec(filename);
         return arr ? arr[0] : '';
     }
     static basename(filename: string): string {

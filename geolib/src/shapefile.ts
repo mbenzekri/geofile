@@ -1,6 +1,9 @@
 import { Geofile, GeofileFeature, GeofileOptions, GeofileFilterOptions, GeofileFiletype, GeofileBinaryParser, GeofileIndexFeature, GeofileGeometry, GeofileGeomtype } from './geofile';
 import * as fs from './sync';
-
+const ISNODE = (typeof window === 'undefined');
+if (ISNODE) { 
+    var TextDecoder = require('text-encoding').TextDecoder;
+}
 interface ShpHeader {
     code: number;
     length: number;
@@ -459,7 +462,7 @@ export class ShapefileDbfParser extends GeofileBinaryParser  {
     private rank = 0;
 
     constructor(shpname: string) {
-        super(shpname.replace(/\..*$/,'.dbf'), GeofileFiletype.DBF, false )
+        super(shpname.replace(/\.[^.]*$/,'.dbf'), GeofileFiletype.DBF, false )
         this.parseDbfHeader()
     }
     parseDbfHeader() {

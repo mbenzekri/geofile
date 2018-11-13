@@ -10,7 +10,7 @@
             "name": "Lancer le programme",
             "program": "${workspaceFolder}/server/dist/index.js",
             "args": [
-                "../data/world",
+                "../geofile/data/world", "-clean"
             ]
         }
     ]

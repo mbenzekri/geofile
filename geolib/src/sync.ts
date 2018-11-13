@@ -9,6 +9,7 @@ const ISNODE = (typeof window === 'undefined');
  * stores file time and size in localStorage
  * @deprecated
  */
+/*
 const SYNCMAP = new class {
     storekey = 'skrat.SYNC_FILE_INFO';
     map = {};
@@ -60,10 +61,14 @@ const SYNCMAP = new class {
     }
 }();
 
-// pour eviter les erreur de compilation
-const win = (window as any);
-if (win.webkitRequestFileSystem && !win.requestFileSystem) {
-    win.requestFileSystem = win.webkitRequestFileSystem;
+*/
+let win: any;
+if (!ISNODE) {
+    // pour eviter les erreur de compilation
+    const win = (window as any);
+    if (win.webkitRequestFileSystem && !win.requestFileSystem) {
+        win.requestFileSystem = win.webkitRequestFileSystem;
+    }
 }
 
 /**
@@ -376,7 +381,7 @@ class FSDir extends FSys {
         }
         return FSDir.read(path).then((dentry) => {
             return new Promise<boolean>((resolve, reject) => {
-                (dentry as any).removeRecursively(() => { SYNCMAP.removeDir(path); resolve(true); }, reject);
+                (dentry as any).removeRecursively(() => { /* SYNCMAP.removeDir(path);*/  resolve(true); }, reject);
             });
         });
     }
@@ -491,7 +496,7 @@ class FSDir extends FSys {
                     const files = [];
                     if (Array.isArray(arrofarr)) {
                         arrofarr.flatten(arrofarr).forEach((item) => {
-                            files.push({fullpath: item.fullpath, time: item.time, size: item.size });
+                            files.push({ fullpath: item.fullpath, time: item.time, size: item.size });
                         });
                     }
                     resolve(files);
@@ -517,8 +522,8 @@ class FSFile extends FSys {
             return new Promise((resolve, reject) => {
                 if (this.hasDisk(fullname)) return reject(new Error('FSDir.create disk selector not implemented do not use \"C:\", \"D:\" etc ...]'));
                 const fd = fs.openSync(fullname, 'w', null);
-                const buf =  data instanceof String  ? Buffer.from(<string>data) : Buffer.from(<ArrayBuffer>data);
-                fs.write(fd, buf,(err,written) => {
+                const buf = data instanceof String ? Buffer.from(<string>data) : Buffer.from(<ArrayBuffer>data);
+                fs.write(fd, buf, (err, written) => {
                     fs.closeSync(fd);
                     resolve(written);
                 });
@@ -532,7 +537,7 @@ class FSFile extends FSys {
                     : new Blob([data], { type: 'application/octet-stream' });
             FSys.fs.root.getFile(fullname, { create: true }, (fentry) => {
                 fentry.createWriter((fwriter) => {
-                    fwriter.onwriteend = function (e) { resolve(fentry); SYNCMAP.updateFile(fullname, new Date(), blob.size); };
+                    fwriter.onwriteend = function (e) { resolve(fentry); /* SYNCMAP.updateFile(fullname, new Date(), blob.size);*/ };
                     fwriter.onprogress = function (e) { if (notify) { notify(e); } };
                     fwriter.onerror = function (e) { reject(e); };
                     fwriter.write(blob);
@@ -552,7 +557,7 @@ class FSFile extends FSys {
         if (ISNODE) {
             return new Promise((resolve, reject) => {
                 if (this.hasDisk(fullname)) return reject(new Error('FSDir.create disk selector not implemented do not use \"C:\", \"D:\" etc ...]'));
-                fs.readFile(fullname,(format === FSFormat.text) ? 'utf8' : null, (err, data:string|Buffer) => {
+                fs.readFile(fullname, (format === FSFormat.text) ? 'utf8' : null, (err, data: string | Buffer) => {
                     err ? reject(err) : (typeof data === 'string') ? resolve(data) : resolve(<ArrayBuffer>data.buffer)
                 });
             });
@@ -580,15 +585,15 @@ class FSFile extends FSys {
      * @param offset offset in byte in the file
      * @param length length of the slice to read
      */
-    static slice(file: number|File, format: FSFormat, offset: number, length: number): Promise<string|ArrayBuffer> {
+    static slice(file: number | File, format: FSFormat, offset: number, length: number): Promise<string | ArrayBuffer> {
         if (ISNODE) {
             return new Promise((resolve, reject) => {
-                const buf = Buffer.alloc(length,0);
-                fs.read(<number>file,buf,0,length,offset,(err,bytesread) => {
+                const buf = Buffer.alloc(length, 0);
+                fs.read(<number>file, buf, 0, length, offset, (err, bytesread) => {
                     if (err) {
                         reject(err);
-                    } else  if (format == FSFormat.text) {
-                        resolve(buf.slice(0,bytesread).toString('utf8'));
+                    } else if (format == FSFormat.text) {
+                        resolve(buf.slice(0, bytesread).toString('utf8'));
                     } else {
                         if (bytesread === length) {
                             resolve(<ArrayBuffer>buf.buffer);
@@ -598,7 +603,7 @@ class FSFile extends FSys {
                             source.forEach((v, i) => target[i] = source[i]);
                             resolve(<ArrayBuffer>target.buffer);
                         }
-                        
+
                     }
                 });
             });
@@ -620,24 +625,24 @@ class FSFile extends FSys {
         let offset = 0;
         if (ISNODE) {
             return FSFile.get(fullname)
-            .then(file => {
-                return new Promise<void>((resolve, reject) => {
-                    const loop = () => {
-                    const expected = 64*1024;
-                    FSFile.slice(file,FSFormat.arraybuffer,offset,expected)
-                        .then( (data: ArrayBuffer) => {
-                            offset+=data.byteLength;
-                            try {
-                                ondata && ondata(data);
-                                return (data.byteLength < expected) ?  resolve() : loop() 
-                            } catch (e) {
-                              return reject(new Error(`error while parsing file ${fullname} : ${e.message}`));   
-                            }
-                        });
-                    };
-                    loop();
-                });
-            })    
+                .then(file => {
+                    return new Promise<void>((resolve, reject) => {
+                        const loop = () => {
+                            const expected = 64 * 1024;
+                            FSFile.slice(file, FSFormat.arraybuffer, offset, expected)
+                                .then((data: ArrayBuffer) => {
+                                    offset += data.byteLength;
+                                    try {
+                                        ondata && ondata(data);
+                                        return (data.byteLength < expected) ? resolve() : loop()
+                                    } catch (e) {
+                                        return reject(new Error(`error while parsing file ${fullname} : ${e.message}`));
+                                    }
+                                });
+                        };
+                        loop();
+                    });
+                })
         }
         return FSFile.get(fullname)
             .then(file => {
@@ -690,11 +695,11 @@ class FSFile extends FSys {
                 if (this.hasDisk(fullname)) return reject(new Error('FSDir.remove disk selector not implemented do not use \"C:\", \"D:\" etc ...]'));
                 fs.unlinkSync(fullname);
                 resolve();
-            });    
+            });
         }
         return new Promise((resolve, reject) => {
             FSys.fs.root.getFile(fullname, { create: false }, (fentry) => fentry.remove(() => {
-                SYNCMAP.removeFile(fullname);
+                /* SYNCMAP.removeFile(fullname); */
                 resolve();
             }, reject), reject);
         });
@@ -717,9 +722,9 @@ class FSFile extends FSys {
      */
     static metadata(fullname: string): Promise<any> {
         if (ISNODE) {
-            return new Promise ((resolve,reject) => {
+            return new Promise((resolve, reject) => {
                 if (this.hasDisk(fullname)) return reject(new Error('FSDir.create disk selector not implemented do not use \"C:\", \"D:\" etc ...]'));
-                fs.stat(fullname,(err,stats) => err ? resolve(null) : resolve({modificationTime: stats.mtime, size: stats.size}));
+                fs.stat(fullname, (err, stats) => err ? resolve(null) : resolve({ modificationTime: stats.mtime, size: stats.size }));
             });
         }
         return new Promise((resolve, reject) => {
@@ -727,14 +732,14 @@ class FSFile extends FSys {
         });
     }
 
-    static release(file: number):  Promise<void> {
+    static release(file: number): Promise<void> {
         if (ISNODE) {
             return new Promise((resolve) => {
                 try {
                     fs.closeSync(file);
-                } catch(e) {}
+                } catch (e) { }
                 resolve();
-            });    
+            });
         }
         return Promise.resolve();
     }

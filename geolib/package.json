@@ -5,11 +5,8 @@
   "main": "index.js",
   "scripts": {
     "compile": "tsc -p .",
-    "tar": "tar -czf ./dist/geofile.tgz -C ./dist *.js *.ts  *.map *.json",
-    "copy": "cp src/*.js src/*.d.ts package.json ./dist ",
-    "build": "run-s compile copy tar",
-    "install_s": "cp dist/*.* ../server/node_modules/geofile ",
-    "install_c": "cp dist/*.* ../client/node_modules/geofile "
+    "copy": "cp src/*.js package.json ./dist ",
+    "build": "run-s compile copy"
   },
   "author": "Mohamed Ben Zekri",
   "license": "ISC",
